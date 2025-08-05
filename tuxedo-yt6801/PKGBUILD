@@ -1,0 +1,30 @@
+# Maintainer: woodwose <mailbox@woodwo.se>
+# Maintainer: LongSang01 <49708391+LongSang01@users.noreply.github.com>
+
+_pkgname=tuxedo-yt6801
+pkgname=${_pkgname}-dkms
+pkgver=1.0.30tux2
+pkgrel=1
+pkgdesc="Kernel module for Motorcomm YT6801 ethernet controller (DKMS)"
+url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
+arch=('x86_64')
+license=('GPL-2.0-or-later')
+depends=('dkms')
+makedepends=('git')
+conflicts=('yt6801-dkms')
+source=("$_pkgname-$pkgver.tar.gz::https://gitlab.com/tuxedocomputers/development/packages/tuxedo-yt6801/-/archive/v$pkgver/$_pkgname-v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+
+package() {
+    extracted_archive=("${_pkgname}-v${pkgver}")
+
+    mkdir -p "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
+
+    install -Dm644 "${extracted_archive}"/debian/tuxedo-yt6801.dkms "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
+    sed -i "s/#MODULE_VERSION#/${pkgver}/" "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
+
+    install -Dm644 "${extracted_archive}/src/"*.c "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/"
+    install -Dm644 "${extracted_archive}/src/"*.h "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/"
+    install -Dm644 "${extracted_archive}/src/"Kbuild "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/"
+}
