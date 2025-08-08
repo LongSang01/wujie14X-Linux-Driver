@@ -3,7 +3,7 @@
 
 _pkgname=tuxedo-drivers
 pkgname=${_pkgname}-nocompatcheck-dkms
-pkgver=4.14.4
+pkgver=4.15.0
 pkgrel=1
 pkgdesc="TUXEDO Computers kernel module drivers. Compatibility To MECHREVO"
 url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
