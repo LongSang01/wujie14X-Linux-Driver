@@ -41,3 +41,10 @@ yay -S tuxedo-control-center-bin
 cd tuxedo-yt6801/
 makepkg -si
 ```
+
+2025.08.18 更新  
+目前官方驱动不支持`6.16`内核  
+建议使用aur
+```bash
+yay -S yt6801-dkms
+```
