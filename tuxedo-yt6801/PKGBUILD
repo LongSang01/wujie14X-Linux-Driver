@@ -3,7 +3,7 @@
 
 _pkgname=tuxedo-yt6801
 pkgname=${_pkgname}-dkms
-pkgver=1.0.30tux2
+pkgver=1.0.30tux3
 pkgrel=1
 pkgdesc="Kernel module for Motorcomm YT6801 ethernet controller (DKMS)"
 url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
