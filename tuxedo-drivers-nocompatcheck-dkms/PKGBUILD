@@ -1,13 +1,13 @@
-# Maintainer: Martin Kröner <aur@kroner.dev>
+# Maintainer: Steven Seifried <gitlab@canox.net>
 # Maintainer: LongSang01 <49708391+LongSang01@users.noreply.github.com>
 
 _pkgname=tuxedo-drivers
 pkgname=${_pkgname}-nocompatcheck-dkms
-pkgver=4.15.2
+pkgver=4.15.3
 pkgrel=1
 pkgdesc="TUXEDO Computers kernel module drivers. Compatibility To MECHREVO"
 url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
-license=("GPL3")
+license=("GPL-2.0-or-later")
 arch=('x86_64')
 depends=('dkms')
 options=(!debug)
@@ -45,21 +45,13 @@ package() {
     extracted_archive=("${_pkgname}-v${pkgver}")
 
     mkdir -p "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
-    mkdir -p "${pkgdir}/etc/udev/rules.d/"
+    mkdir -p "${pkgdir}/etc/"
     mkdir -p "${pkgdir}/usr/lib/udev/hwdb.d"
 
     install -Dm644 "${extracted_archive}"/debian/tuxedo-drivers.dkms "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
     sed -i "s/#MODULE_VERSION#/${pkgver}/" "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
 
-    cp -avr "${extracted_archive}"/src/* "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
-
-    install -Dm644 "${extracted_archive}"/tuxedo_keyboard.conf -t "${pkgdir}/usr/lib/modprobe.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/61-keyboard-tuxedo.hwdb -t "$pkgdir/usr/lib/udev/hwdb.d"
-    install -Dm644 "${_pkgname}-v${pkgver}"/61-sensor-tuxedo.hwdb -t "$pkgdir/usr/lib/udev/hwdb.d"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-infinity-flex-touchpanel-toggle.rules -t "$pkgdir/etc/udev/rules.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-intel-gen13-sleep-state.rules -t "$pkgdir/etc/udev/rules.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-pulse-gen2-wakeup-through-nvme-controller.rules -t "$pkgdir/etc/udev/rules.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-nb02-touchpad-mouse.rules -t "$pkgdir/etc/udev/rules.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-realtek-rts522a-idle-behaviour.rules -t "$pkgdir/etc/udev/rules.d/"
-    install -Dm644 "${_pkgname}-v${pkgver}"/99-tuxedo-fix-systemd-led-bootdelay.rules -t "$pkgdir/etc/udev/rules.d/"
+    cp -rav "${extracted_archive}"/etc/* -t "${pkgdir}/etc/"
+    cp -rav "${extracted_archive}"/usr/* -t "${pkgdir}/usr"
+    cp -rav "${extracted_archive}"/src/*  "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
 }
