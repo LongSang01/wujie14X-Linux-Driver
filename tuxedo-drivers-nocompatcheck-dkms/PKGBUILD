@@ -3,7 +3,7 @@
 
 _pkgname=tuxedo-drivers
 pkgname=${_pkgname}-nocompatcheck-dkms
-pkgver=4.15.3
+pkgver=4.15.4
 pkgrel=1
 pkgdesc="TUXEDO Computers kernel module drivers. Compatibility To MECHREVO"
 url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
@@ -44,14 +44,12 @@ prepare() {
 package() {
     extracted_archive=("${_pkgname}-v${pkgver}")
 
-    mkdir -p "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
-    mkdir -p "${pkgdir}/etc/"
-    mkdir -p "${pkgdir}/usr/lib/udev/hwdb.d"
+    install -Dm644 "${extracted_archive}"/debian/tuxedo-drivers.dkms "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/dkms.conf"
+    sed -i "s/#MODULE_VERSION#/$pkgver/g" "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/dkms.conf"
 
-    install -Dm644 "${extracted_archive}"/debian/tuxedo-drivers.dkms "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
-    sed -i "s/#MODULE_VERSION#/${pkgver}/" "${pkgdir}/usr/src/${_pkgname}-v${pkgver}/dkms.conf"
+    install -Dm644 "${extracted_archive}"/etc/modprobe.d/tuxedo_keyboard.conf -t "$pkgdir/usr/lib/modprobe.d/"
+    install -Dm644 "${extracted_archive}"/usr/lib/udev/rules.d/*.rules -t "$pkgdir/etc/udev/rules.d/"
+    install -Dm644 "${extracted_archive}"/usr/lib/udev/hwdb.d/*.hwdb -t "$pkgdir/usr/lib/udev/hwdb.d/"
 
-    cp -rav "${extracted_archive}"/etc/* -t "${pkgdir}/etc/"
-    cp -rav "${extracted_archive}"/usr/* -t "${pkgdir}/usr"
-    cp -rav "${extracted_archive}"/src/*  "${pkgdir}/usr/src/${_pkgname}-v${pkgver}"
+    cp -r "${extracted_archive}"/src/* "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/"
 }
