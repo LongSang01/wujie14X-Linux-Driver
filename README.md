@@ -52,3 +52,11 @@ tuxedo 的驱动也支持 6.16 了
 ```bash
 yay -S yt6801-dkms
 ```
+
+2026.01.16 更新  
+yt6801网卡二次插拔网线挂起没反应  
+https://gitlab.com/tuxedocomputers/development/packages/tuxedo-yt6801/-/issues/27  
+上游未修复，暂时只能通过重加载驱动解决
+```bash
+sudo modprobe -r yt6801 && sudo modprobe yt6801
+```
