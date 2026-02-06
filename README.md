@@ -13,7 +13,7 @@
 **近几月内发现`tuxedo-control`的`CPU控制`功能，经常导致黑屏重启；电源管理和`power-profiles-daemon`冲突，经常导致系统挂起，暂已弃用**
 
 ### 2026-02-06
-**`KDE`更新`ddcutil 2.2.5`版本后导致进入桌面卡死，结合刚安装时的花屏问题，推荐禁用`PSR`**
+**`KDE`更新`ddcutil 2.2.5`版本后导致进入桌面卡死，结合刚安装时的花屏问题，推荐禁用`PSR`**  
 `/boot/loader/entries/*.conf`
 ```bash
 options ... amdgpu.dcdebugmask=0x10
