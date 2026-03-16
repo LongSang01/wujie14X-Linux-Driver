@@ -3,7 +3,7 @@
 
 _pkgname=tuxedo-drivers
 pkgname=${_pkgname}-nocompatcheck-dkms
-pkgver=4.18.2
+pkgver=4.21.2
 pkgrel=1
 pkgdesc="TUXEDO Computers kernel module drivers. Compatibility To MECHREVO"
 url="https://gitlab.com/tuxedocomputers/development/packages/${_pkgname}"
@@ -28,9 +28,11 @@ provides=('tuxedo-drivers-dkms'
           'ite_8297'
           'ite_829x')
 conflicts=('tuxedo-drivers-dkms' 'tuxedo-keyboard-dkms' 'tuxedo-keyboard-ite-dkms')
-source=($_pkgname-$pkgver.tar.gz::https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/archive/v$pkgver/$_pkgname-v$pkgver.tar.gz)
-sha256sums=('SKIP')
-sha512sums=('SKIP')
+source=(
+    $_pkgname-$pkgver.tar.gz::https://gitlab.com/tuxedocomputers/development/packages/tuxedo-drivers/-/archive/v$pkgver/$_pkgname-v$pkgver.tar.gz
+    "dkms.conf.source"
+)
+sha256sums=("SKIP" "SKIP")
 
 prepare() {
     extracted_dir=("${_pkgname}-v${pkgver}")
@@ -42,14 +44,15 @@ prepare() {
 }
 
 package() {
-    extracted_archive=("${_pkgname}-v${pkgver}")
+    extracted_archive="${_pkgname}-v${pkgver}"
 
-    install -Dm644 "${extracted_archive}"/debian/tuxedo-drivers.dkms "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/dkms.conf"
-    sed -i "s/#MODULE_VERSION#/$pkgver/g" "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/dkms.conf"
+    sed -i "s/#MODULE_VERSION#/${pkgver}/" "${srcdir}/dkms.conf.source"
+    install -Dm644 "${srcdir}"/dkms.conf.source "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/dkms.conf"
 
-    install -Dm644 "${extracted_archive}"/usr/lib/modprobe.d/*.conf -t "$pkgdir/usr/lib/modprobe.d/"
-    install -Dm644 "${extracted_archive}"/usr/lib/udev/rules.d/*.rules -t "$pkgdir/usr/lib/udev/rules.d/"
-    install -Dm644 "${extracted_archive}"/usr/lib/udev/hwdb.d/*.hwdb -t "$pkgdir/usr/lib/udev/hwdb.d/"
+    install -Dm644 "${extracted_archive}"/files/usr/lib/modprobe.d/*.conf -t "$pkgdir/usr/lib/modprobe.d/"
+    install -Dm644 "${extracted_archive}"/files/usr/lib/udev/rules.d/*.rules -t "$pkgdir/usr/lib/udev/rules.d/"
+    install -Dm644 "${extracted_archive}"/files/usr/lib/udev/hwdb.d/*.hwdb -t "$pkgdir/usr/lib/udev/hwdb.d/"
 
+    mkdir -p "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/"
     cp -r "${extracted_archive}"/src/* "$pkgdir/usr/src/${pkgname%-dkms}-$pkgver/"
 }
