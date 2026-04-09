@@ -36,7 +36,8 @@ sudo systemctl enable tuned tuned-ppd
 
 ### 2026-04-09
 
-通过 `ACPI` 直接管理电池模式和键盘背光
+通过 `ACPI` 直接管理电池模式和键盘背光  
+添加了个小脚本实现自动化调整
 
 ## 控制中心
 
@@ -140,4 +141,27 @@ echo '\_SB.INOU.ECRW 0x78c 0x1' | sudo tee /proc/acpi/call && sudo cat /proc/acp
 
 # 关闭键盘背光
 echo '\_SB.INOU.ECRW 0x78c 0x3' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
+```
+
+随手写了个脚本自动化，具体使用方法可查看代码内的`help`
+
+```
+go build ./wujie14xCC.go
+sudo mv wujie14xCC /usr/local/bin/
+```
+
+`/etc/systemd/system/wujie14xCC.service `
+
+```bash
+[Unit]
+Description=Wujie 14X CC
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wujie14xCC set b 3 k off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
 ```
