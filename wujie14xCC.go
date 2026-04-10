@@ -82,23 +82,23 @@ func getStatus() {
 	battery := execACPI("\\_SB.INOU.ECRR", "0x7a6", "")
 	keyboard := execACPI("\\_SB.INOU.ECRR", "0x78c", "")
 	fmt.Println("状态信息:")
-	fmt.Printf("  电池模式: %s (0x8: 100%%, 0x18: 90%%, 0x28: 80%%)\n", battery)
+	fmt.Printf("  电池模式: %s (0x8: 100%%, 0x18: ~90%%, 0x28: ~80%%)\n", battery)
 	fmt.Printf("  键盘背光: %s (0x1: 开, 0x3: 关)\n", keyboard)
 }
 
 // ---------------- CLI ----------------
 func usage() {
 	fmt.Println(`
-wujie14XCC By LongSang01
+wujie14xCC By LongSang01
 
 用法:
-  wujie14XCC set [battery|b <val>] [keyboard|k <val>]
-  wujie14XCC get
+  wujie14xCC set [battery|b [1 (100%)|2 (~90%)|3 (~80%)]] [keyboard|k [on|off]]
+  wujie14xCC get
 
 示例:
-  wujie14XCC set b 2 k off
-  wujie14XCC set keyboard on b 1
-  wujie14XCC get
+  wujie14xCC set b 2 k off
+  wujie14xCC set keyboard on battery 1
+  wujie14xCC get
 `)
 }
 
