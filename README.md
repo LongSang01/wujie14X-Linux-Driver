@@ -1,18 +1,14 @@
 ## 概述
 
 无界 14X 基于同方的主板, 可以用 `TUXEDO` 的驱动来让大部分功能正常 work  
-比如电池充电上限控制,风扇控制, 不过也有些小问题, 基本都是`TDP`相关(不装控制中心除了电池充电上限基本都正常工作, 所以请参考自己的使用情况, 控制中心对我的作用就是防止电池快速挂掉)
+比如电池充电上限控制,风扇控制, 不过也有些小问题, 基本都是`TDP`相关
 
 1. `fn+x`热键会被`tuxedo`的控制面板拦截, 变成打开控制中心, 导致切换`TDP`(电源模式)失败
 2. tuxedo 控制中心无法更改`TDP`, cpu`TDP`锁死默认 `45w`，切换`bios`内的电源模式也无效
 
-不过`8845HS/8745HS`这颗U也就这样了, 切到`65w`原装电源适配器也顶不住,烫的要死, 应该也没人用集显打游戏吧 `?`，玩玩 CS2 这种可以用`gamemode`, `gamescope`, 实测可以让帧数更稳定且更高, 就是热热热热
+不过`8845HS/8745HS`这颗U也就这样了, 切到`65w`原装电源适配器也顶不住,烫的要死, 应该也没人用集显打游戏吧 `?`
 
 ## !!!警告(必看)
-
-### 2025-12-23
-
-**近几月内发现`tuxedo-control`的`CPU控制`功能和`power-profiles-daemon`冲突，经常导致系统挂起，暂已弃用**
 
 ### 2026-02-06
 
@@ -38,6 +34,13 @@ sudo systemctl enable tuned tuned-ppd
 
 通过 `ACPI` 直接管理电池模式和键盘背光  
 添加了个小脚本实现自动化调整
+
+### 2026-04-27
+
+实测电池充电模式切换似乎并未生效  
+根据官网的描述，[可以通过确认电池电流是否为0判断](https://www.tuxedocomputers.com/en/Battery-charging-profiles-inside-the-TUXEDO-Control-Center.tuxedo)  
+但是实测电流会在充电到设置值时瞬间跳`0`然后继续充电直至充满  
+情况与该 [issues](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4193693266) 评论相同
 
 ## 控制中心
 
@@ -75,18 +78,10 @@ echo stationary | sudo tee /sys/devices/platform/tuxedo_keyboard/charging_profil
 
 ## 有线网卡驱动
 
-构建包魔改自 [PKGBUILD](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=tuxedo-yt6801-dkms-git)  
-仓库内为 [tuxedo-yt6801](https://gitlab.com/tuxedocomputers/development/packages/tuxedo-yt6801)
+可直接使用aur内的包
 
 ```bash
-cd tuxedo-yt6801/
-makepkg -si
-```
-
-也可使用`aur`的包
-
-```bash
-yay -S yt6801-dkms
+yay -S tuxedo-yt6801-dkms-git
 ```
 
 二次插拔网线挂起没反应  
