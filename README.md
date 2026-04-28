@@ -42,6 +42,12 @@ sudo systemctl enable tuned tuned-ppd
 但是实测电流会在充电到设置值时瞬间跳`0`然后继续充电直至充满  
 情况与该 [issues](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4193693266) 评论相同
 
+### 2026-04-28
+
+二次测试电池模式是否生效  
+详见[日志](./battery_log/机械革命_无界14x暴风雪_ArchLinux下的充电记录.md)  
+基本可以确认`电池模式切换`在`linux`没有正常工作
+
 ## 控制中心
 
 构建包魔改自 [PKGBUILD](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=tuxedo-drivers-nocompatcheck-dkms)  
