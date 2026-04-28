@@ -51,3 +51,21 @@
 | Battery Current            | +0mA                     |
 | Battery Temperautre        | 32                       |
 | Battery Capacity           | 100%(4300 mAh / 4300mAh) |
+
+
+## `2026-04-28 15:46:18` 更新
+
+重启电脑后`current_now`变为`0`，不排除是电池彻底充满导致的，切换电池模式仍然不会对`current_now`的值有任何影响
+```bash
+[nihao@01-Arch ~]$ echo '\_SB.INOU.ECRW 0x7a6 0x28' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call | cat /sys/class/power_supply/BAT0/current_now
+\_SB.INOU.ECRW 0x7a6 0x28
+0
+
+[nihao@01-Arch ~]$ echo '\_SB.INOU.ECRW 0x7a6 0x8' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call | cat /sys/class/power_supply/BAT0/current_now
+
+\_SB.INOU.ECRW 0x7a6 0x8
+0
+
+[nihao@01-Arch ~]$ cat /sys/class/power_supply/BAT0/current_now
+0
+```
