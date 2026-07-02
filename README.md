@@ -45,8 +45,16 @@ sudo systemctl enable tuned tuned-ppd
 ### 2026-04-28
 
 二次测试电池模式是否生效  
-详见[日志](./battery_log/机械革命_无界14x暴风雪_ArchLinux下的充电记录.md)  
-基本可以确认`电池模式切换`在`linux`没有正常工作
+详见[日志](./battery_log-260428/README.md)  
+**基本可以确认`电池模式切换`在`linux`没有正常工作**
+
+### 2026-07-02
+
+参照该[评论](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4417676075)  
+通过修改`0x7b9`重新测试
+
+详见[日志](./battery_log-260702/README.md)  
+**电池充电上限看起来还是不可用(悲)**
 
 ## 控制中心
 
@@ -84,7 +92,9 @@ echo stationary | sudo tee /sys/devices/platform/tuxedo_keyboard/charging_profil
 
 ## 有线网卡驱动
 
-可直接使用aur内的包
+**Linux 7.0已将驱动集成到主线内**
+
+旧版本可使用aur内的包
 
 ```bash
 yay -S tuxedo-yt6801-dkms-git
@@ -93,7 +103,7 @@ yay -S tuxedo-yt6801-dkms-git
 二次插拔网线挂起没反应  
 https://gitlab.com/tuxedocomputers/development/packages/tuxedo-yt6801/-/issues/27
 
-可通过重加载模块修复，最新版本仍未修复该Bug
+可通过重加载模块修复，最新版本仍未修复该Bug(2026.07.02更新：自4月后未测试)
 
 ```bash
 sudo modprobe -r yt6801 && sudo modprobe yt6801
