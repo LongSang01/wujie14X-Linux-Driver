@@ -62,7 +62,6 @@ nihao@01-Arch ~]$ echo '\_SB.INOU.ECRR 0x7b9' | sudo tee /proc/acpi/call && sudo
 
 **好吧看起来充电限制还是没有生效(悲)**
 
-
 作为参考，以下是我的`upower`回显
 
 ```
@@ -100,4 +99,11 @@ nihao@01-Arch ~]$ echo '\_SB.INOU.ECRR 0x7b9' | sudo tee /proc/acpi/call && sudo
     icon-name:          'battery-full-charged-symbolic'
   History (voltage):
     1782968648  16.326  fully-charged
+```
+
+通过以下方式提取dsdt并上传到仓库内，如果这对某些人的工作有帮助那就更好了
+
+```
+sudo acpidump -b
+iasl -d dsdt.dat
 ```
