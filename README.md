@@ -56,6 +56,10 @@ sudo systemctl enable tuned tuned-ppd
 详见[日志](./battery_log-260702/README.md)  
 **电池充电上限看起来还是不可用(悲)**
 
+### 2026-07-08
+
+根据[逆向的代码](https://gist.github.com/w568w/b2fc5f9d1f4dff13efe751abec27b396?permalink_comment_id=6238746#gistcomment-6238746)重新制作了一版控制中心
+
 ## 控制中心
 
 构建包魔改自 [PKGBUILD](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=tuxedo-drivers-nocompatcheck-dkms)  
@@ -170,7 +174,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/wujie14xCC set b 3 k off
+ExecStart=/usr/local/bin/wujie14xCC -mode 80 -kbd-level 0
 RemainAfterExit=yes
 
 [Install]
