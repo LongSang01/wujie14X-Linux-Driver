@@ -6,15 +6,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	acpiReadMethod  = "\\_SB.INOU.ECRR"
 	acpiWriteMethod = "\\_SB.INOU.ECRW"
 
-	ECAddrBatteryMode     = 0x07A6 // 充电模式控制寄存器，bit4/bit5 决定充电截止百分比 (100/90/80)
-	ECAddrChargeLimitUp   = 0x07B9 // 充电上限百分比寄存器，bit6~bit0 存储上限值 (0 表示默认 100%)
-	ECAddrChargeLimitDown = 0x07D0 // 充电下限/起充百分比寄存器，bit6~bit0 存储下限值 (0 表示默认 95%)
+	ECAddrBatteryMode   = 0x07A6 // 充电模式控制寄存器，bit4/bit5 决定充电截止百分比 (100/90/80)
+	ECAddrChargeLimitUp = 0x07B9 // 充电上限百分比寄存器
+
+	// EC 每秒会检查 0x07C3 / 0x0770 只有true时才会开启limit_enabled
+	ECAddrChargeGate   = 0x0742 // bit2 (0x04) = 充电限制门控是否已启用
+	ECAddrChargeState1 = 0x07C3 // EC 内部状态寄存器 #1
+	ECAddrChargeState2 = 0x0770 // EC 内部状态寄存器 #2
 
 	ECAddrFullChargeCapLow = 0x0404 // 满充容量低位寄存器 (16-bit word，单位 mAh)
 
@@ -162,46 +167,60 @@ func (a *AcpiCall) ReadChargeLimitUp() (int, error) {
 }
 
 func (a *AcpiCall) WriteChargeLimitUp(pct int) error {
-	if pct < 0 || pct > 100 {
-		return fmt.Errorf("充电上限必须为 0-100, 输入为 %d", pct)
+	if pct < 1 || pct > 100 {
+		return fmt.Errorf("充电上限必须为 1-100, 输入为 %d", pct)
 	}
-	old, err := a.ReadByte(ECAddrChargeLimitUp)
-	if err != nil {
-		return err
-	}
-	preserved := old & 0x80
-	val := preserved
-	if pct != 100 {
-		val |= byte(pct)
-	}
-	return a.WriteByte(ECAddrChargeLimitUp, val)
-}
 
-func (a *AcpiCall) ReadChargeLimitDown() (int, error) {
-	val, err := a.ReadByte(ECAddrChargeLimitDown)
+	state1, err := a.ReadByte(ECAddrChargeState1)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("读取状态寄存器 0x07C3 失败: %w", err)
 	}
-	if limit := val & 0x7F; limit != 0 {
-		return int(limit), nil
+	state2, err := a.ReadByte(ECAddrChargeState2)
+	if err != nil {
+		return fmt.Errorf("读取状态寄存器 0x0770 失败: %w", err)
 	}
-	return 95, nil
-}
+	if state1 != 0x07 || state2 != 0xFF {
+		return fmt.Errorf(
+			"EC 状态与预期不符 (07C3=0x%02X, 0770=0x%02X)，可能不适用于你的固件", state1, state2)
+	}
 
-func (a *AcpiCall) WriteChargeLimitDown(pct int) error {
-	if pct < 0 || pct > 95 {
-		return fmt.Errorf("充电下限必须为 0-95, 输入为 %d", pct)
-	}
-	old, err := a.ReadByte(ECAddrChargeLimitDown)
+	gate, err := a.ReadByte(ECAddrChargeGate)
 	if err != nil {
-		return err
+		return fmt.Errorf("读取门控寄存器 0x0742 失败: %w", err)
 	}
-	preserved := old & 0x80
-	val := preserved
-	if pct != 0 {
-		val |= byte(pct)
+
+	if gate&0x04 != 0 {
+		return a.WriteByte(ECAddrChargeLimitUp, byte(pct))
 	}
-	return a.WriteByte(ECAddrChargeLimitDown, val)
+
+	if err := a.WriteByte(ECAddrChargeLimitUp, byte(pct)); err != nil {
+		return fmt.Errorf("写入充电上限失败: %w", err)
+	}
+
+	// 临时伪装状态绕过 EC；无论成功与否都要恢复原值，避免影响其他 EC 逻辑
+	if err := a.WriteByte(ECAddrChargeState1, 0x04); err != nil {
+		return fmt.Errorf("写入伪装状态失败: %w", err)
+	}
+	time.Sleep(2 * time.Second)
+	if err := a.WriteByte(ECAddrChargeState1, state1); err != nil {
+		return fmt.Errorf("恢复状态寄存器失败（EC 可能处于非预期状态，请手动检查）: %w", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	liveLimit, err := a.ReadByte(ECAddrChargeLimitUp)
+	if err != nil {
+		return fmt.Errorf("校验读取充电上限失败: %w", err)
+	}
+	finalGate, err := a.ReadByte(ECAddrChargeGate)
+	if err != nil {
+		return fmt.Errorf("校验读取门控寄存器失败: %w", err)
+	}
+	if int(liveLimit&0x7F) != pct || finalGate&0x04 == 0 {
+		return fmt.Errorf(
+			"修复未生效: limit=%d%%, gate=0x%02X (可能不适用于你的固件)",
+			liveLimit&0x7F, finalGate)
+	}
+	return nil
 }
 
 func (a *AcpiCall) ReadBatteryTemperature() (int, error) {
@@ -329,14 +348,12 @@ func printECStatus(a *AcpiCall) {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("%d%%", v), nil
-		}},
-		{"充电下限        ", func() (string, error) {
-			v, err := a.ReadChargeLimitDown()
-			if err != nil {
-				return "", err
+			gate, gerr := a.ReadByte(ECAddrChargeGate)
+			enabled := "未生效"
+			if gerr == nil && gate&0x04 != 0 {
+				enabled = "已生效"
 			}
-			return fmt.Sprintf("%d%%", v), nil
+			return fmt.Sprintf("%d%% (%s)", v, enabled), nil
 		}},
 		{"电池温度        ", func() (string, error) {
 			v, err := a.ReadBatteryTemperature()
@@ -441,8 +458,7 @@ func printECStatus(a *AcpiCall) {
 
 func main() {
 	flagMode := flag.Int("mode", -1, "设置充电模式: 100|90|80")
-	flagLimitUp := flag.Int("limit-up", -1, "设置充电上限百分比，默认100%")
-	flagLimitDown := flag.Int("limit-down", -1, "设置充电下限/起始百分比，默认95%")
+	flagLimitUp := flag.Int("limit-up", -1, "设置充电上限百分比(1-100)")
 	flagStatus := flag.Bool("status", false, "读取当前电池充电状态")
 	flagKBDLevel := flag.Int("kbd-level", -1, "设置键盘灯亮度 (0=关 1=低 2=高)")
 	flagPerf := flag.Int("perf", -1, "设置性能模式TDP: 25|45|65")
@@ -450,11 +466,10 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "无界14x 控制中心 By LongSang01\n")
 		fmt.Fprintf(os.Stderr, "依赖项: acpi_call\n\n")
-		fmt.Fprintf(os.Stderr, "经过实际测试，充电模式和充电限制均无法正常工作，这两个功能仅供演示\n\n")
+		fmt.Fprintf(os.Stderr, "经过实际测试，充电模式无法正常工作，仅供演示；充电上限已经可以正常工作\n")
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		fmt.Fprintf(os.Stderr, "  -mode int\n        设置充电模式: 100|90|80\n")
-		fmt.Fprintf(os.Stderr, "  -limit-up int\n        设置充电上限百分比，默认100%%\n")
-		fmt.Fprintf(os.Stderr, "  -limit-down int\n        设置充电下限/起始百分比，默认95%%\n")
+		fmt.Fprintf(os.Stderr, "  -limit-up int\n        设置充电上限百分比 (1-100)\n")
 		fmt.Fprintf(os.Stderr, "  -status\n        读取当前电池充电状态\n")
 		fmt.Fprintf(os.Stderr, "  -kbd-level int\n        设置键盘灯亮度 (0=关 1=低 2=高)\n")
 		fmt.Fprintf(os.Stderr, "  -perf int\n        设置性能模式TDP: 25|45|65\n")
@@ -462,8 +477,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  sudo %s -status\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s -mode 80\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s -limit-up 80\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -limit-down 50\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -limit-up 0 -limit-down 0 (恢复默认)\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s -kbd-level 2\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s -perf 45\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s -mode 80 -kbd-level 0\n", os.Args[0])
@@ -478,15 +491,15 @@ func main() {
 
 	acpi := NewAcpiCall()
 
-	hasAction := *flagMode >= 0 || *flagLimitUp >= 0 || *flagLimitDown >= 0 ||
+	hasAction := *flagMode >= 0 || *flagLimitUp >= 0 ||
 		*flagStatus || *flagKBDLevel >= 0 || *flagPerf >= 0
 
 	if !hasAction {
 		*flagStatus = true
 	}
 
-	if *flagMode >= 0 && (*flagLimitUp >= 0 || *flagLimitDown >= 0) {
-		fmt.Fprintln(os.Stderr, "错误: -mode 和 -limit-up/-limit-down 不能同时使用")
+	if *flagMode >= 0 && *flagLimitUp >= 0 {
+		fmt.Fprintln(os.Stderr, "错误: -mode 和 -limit-up 不能同时使用")
 		os.Exit(1)
 	}
 
@@ -510,14 +523,6 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("充电上限已设置为 %d%%\n", *flagLimitUp)
-	}
-
-	if *flagLimitDown >= 0 {
-		if err := acpi.WriteChargeLimitDown(*flagLimitDown); err != nil {
-			fmt.Fprintf(os.Stderr, "设置充电下限错误: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("充电下限已设置为 %d%%\n", *flagLimitDown)
 	}
 
 	if *flagKBDLevel >= 0 {
