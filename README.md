@@ -8,21 +8,13 @@
 
 不过`8845HS/8745HS`这颗U也就这样了, 切到`65w`原装电源适配器也顶不住,烫的要死, 应该也没人用集显打游戏吧 `?`
 
-新增了一个通过`acpi_call`的实现的简易控制中心
+**新增了一个通过`acpi_call`的实现的简易控制中心**
 
 目前已实现调整3档TDP(`25w/45w/65w`)，3档键盘灯，获取电池信息，修改电池充电模式(不可用)，**百分比电池充电上限(现在终于可用了!)**
 
 ## !!!警告(必看)
 
-### 2026-02-06
-
-**`KDE`更新`ddcutil 2.2.5`版本后导致进入桌面卡死，结合刚安装时的花屏问题，推荐禁用`PSR`**
-
-`/boot/loader/entries/*.conf`
-
-```bash
-options ... amdgpu.dcdebugmask=0x10
-```
+**如果使用新版本控制中心设置了电池充电上限，请务必偶尔让电池完整循环一次，否则可能导致容量异常下降，电池损坏等问题，锂电池的工作原理就是这样**
 
 ### 2026-03-16
 
@@ -34,32 +26,6 @@ options ... amdgpu.dcdebugmask=0x10
 sudo systemctl enable tuned tuned-ppd
 ```
 
-### 2026-04-09
-
-通过 `ACPI` 直接管理电池模式和键盘背光  
-添加了个小脚本实现自动化调整
-
-### 2026-04-27
-
-实测电池充电模式切换似乎并未生效  
-根据官网的描述，[可以通过确认电池电流是否为0判断](https://www.tuxedocomputers.com/en/Battery-charging-profiles-inside-the-TUXEDO-Control-Center.tuxedo)  
-但是实测电流会在充电到设置值时瞬间跳`0`然后继续充电直至充满  
-情况与该 [issues](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4193693266) 评论相同
-
-### 2026-04-28
-
-二次测试电池模式是否生效  
-详见[日志](./battery_log-260428/README.md)  
-**基本可以确认`电池模式切换`在`linux`没有正常工作**
-
-### 2026-07-02
-
-参照该[评论](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4417676075)  
-通过修改`0x7b9`重新测试
-
-详见[日志](./battery_log-260702/README.md)  
-**电池充电上限看起来还是不可用(悲)**
-
 ### 2026-07-08
 
 根据[逆向的代码](https://gist.github.com/w568w/b2fc5f9d1f4dff13efe751abec27b396?permalink_comment_id=6238746#gistcomment-6238746)重新制作了一版控制中心
@@ -69,7 +35,13 @@ sudo systemctl enable tuned tuned-ppd
 参照[w568w的新文章](https://gist.github.com/w568w/957976b59906e0ce5d6c13ad342e1593)重新修改控制中心  
 现在电池充电百分比上限可用了！
 
-## 控制中心
+### 2026-07-17
+
+将一些已经过期或者不可用的说明迁移到 [Expired](Expired) 文件夹下
+
+新增刷写[BIOS+EC说明](<Flash_BIOS(高风险).md>)，请勿随意尝试
+
+## Tuxedo控制中心
 
 构建包魔改自 [PKGBUILD](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=tuxedo-drivers-nocompatcheck-dkms)  
 补丁魔改自 [patches](https://github.com/sund3RRR/mechrevo14X-linux/tree/master/patches)
@@ -87,84 +59,14 @@ makepkg -si
 yay -S tuxedo-control-center-bin
 ```
 
-不使用控制面板的话可直接通过`sysfs`接口调整  
-分别对应电池模式的100%，~90%，~80%
-
-```bash
-cat /sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile
-
-# 100%
-echo high_capacity | sudo tee /sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile
-
-# ~90%
-echo balanced | sudo tee /sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile
-
-# ~80%
-echo stationary | sudo tee /sys/devices/platform/tuxedo_keyboard/charging_profile/charging_profile
-```
-
-## 有线网卡驱动
-
-**Linux 7.0已将驱动集成到主线内**
-
-旧版本可使用aur内的包
-
-```bash
-yay -S tuxedo-yt6801-dkms-git
-```
-
-二次插拔网线挂起没反应  
-https://gitlab.com/tuxedocomputers/development/packages/tuxedo-yt6801/-/issues/27
-
-可通过重加载模块修复，最新版本仍未修复该Bug(2026.07.02更新：自4月后未测试)
-
-```bash
-sudo modprobe -r yt6801 && sudo modprobe yt6801
-```
-
 ## 通过`ACPI`直接管理
 
-感谢 [w568w](https://gist.github.com/w568w/b2fc5f9d1f4dff13efe751abec27b396) 的逆向工程  
-通过对 [tuxedo-drivers](https://github.com/tuxedocomputers/tuxedo-drivers/blob/cd9e534c13ffe79641b75abdfc542a87e238a98c/src/uniwill_keyboard.h#L1949) 源码的分析及实机测试  
-开启`manual mode`后即可通过`acpi`直接管理电池模式
+感谢 [w568w](https://gist.github.com/w568w/b2fc5f9d1f4dff13efe751abec27b396) 的逆向工程
 
 安装`acpi_call`
 
 ```bash
 sudo pacman -S acpi_call
-```
-
-手动管理 (`0x8`,`0x18`,`0x28`分别对应100%,~90%,~80%)  
-调整需要使用(`0x08`,`0x18`,`0x28`)
-
-```bash
-# 查看当前电池模式
-echo '\_SB.INOU.ECRR 0x7a6' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 需开启手动模式后才可以调整电池模式
-echo '\_SB.INOU.ECRW 0x741 0x81' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 调整电池模式为 100%
-echo '\_SB.INOU.ECRW 0x7a6 0x08' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 调整电池模式为 ~90%
-echo '\_SB.INOU.ECRW 0x7a6 0x18' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 调整电池模式为 ~80%
-echo '\_SB.INOU.ECRW 0x7a6 0x28' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-```
-
-键盘背光也可通过`acpi`调整，但是为什么不直接用`fn+f6`呢
-
-```bash
-# 查看当前背光设置
-echo '\_SB.INOU.ECRR 0x78c' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 开启键盘背光
-echo '\_SB.INOU.ECRW 0x78c 0x1' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
-
-# 关闭键盘背光
-echo '\_SB.INOU.ECRW 0x78c 0x3' | sudo tee /proc/acpi/call && sudo cat /proc/acpi/call
 ```
 
 随手写了个脚本自动化，具体使用方法可查看代码内的`help`
@@ -183,9 +85,19 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/wujie14xCC -mode 80 -kbd-level 0
+ExecStart=/usr/local/bin/wujie14xCC -limit-up 80 -kbd-level 0
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+### 充电限制原理
+
+机械革命的`EC`默认将`limit_enabled`设置为`False`，导致充电限制永远不会生效  
+`limit_enabled`不在`EC可写`的范围内，所以我们永远无法修复这个问题
+
+[w568w](https://gist.github.com/w568w/957976b59906e0ce5d6c13ad342e1593#2-the-solution-is-obvious)发现了`EC`的同步逻辑  
+可以通过将状态值`0x07C3`覆写为`0x04`，使`limit_enabled`变为`true`  
+等待`EC`下一个`同步周期`，`EC`自动执行`store_limit()`  
+这样`0x07B9`的充电限制就可以生效了
