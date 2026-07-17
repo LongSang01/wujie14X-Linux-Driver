@@ -11,9 +11,10 @@
 
 操作过程如下：
 
-**确保电池电量>60%且插入电源适配器，否则刷写失败将会直接变砖**
+**确保电池电量>60%且插入电源适配器，否则刷写失败可能导致直接变砖**  
+**刷写过程中请勿进行任何形式的断电或手动重启**
 
-- 从`https://cloud.slimbook.net/s/download?dir=/Laptops/Evo-14/Ryzen-8845HS/BIOS` 下载压缩包
+- 从`https://cloud.slimbook.net/s/download?dir=/Laptops/Evo-14/Ryzen-8845HS/BIOS/` 下载压缩包
 
 - 准备一块`FAT32`格式的`U盘`，将压缩包解压到`U盘根目录`，确保`BIOS`，`EC`，`EFI`文件夹及其内容均存在且无损坏
 
@@ -35,4 +36,4 @@
   ```
   等待`EC`刷写完成
 
-全部完成后再次进入`BIOS`，在`Advanced`选项卡将出现`Battery Maximum Limit`，可直接调整电池充电上限，你也可以通过我的脚本来修改
+全部完成后进入`BIOS`，在`Advanced`选项卡将出现`Battery Maximum Limit`，可直接调整电池充电上限，你也可以通过我的脚本来修改
