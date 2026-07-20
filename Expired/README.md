@@ -23,7 +23,7 @@ options ... amdgpu.dcdebugmask=0x10
 ### 2026-04-28
 
 二次测试电池模式是否生效  
-详见[日志](./battery_log-260428/README.md)  
+详见[日志](/battery_log-260428/README.md)  
 **基本可以确认`电池模式切换`在`linux`没有正常工作**
 
 ### 2026-07-02
@@ -31,7 +31,7 @@ options ... amdgpu.dcdebugmask=0x10
 参照该[评论](https://github.com/tuxedocomputers/tuxedo-control-center/issues/268#issuecomment-4417676075)  
 通过修改`0x7b9`重新测试
 
-详见[日志](./battery_log-260702/README.md)  
+详见[日志](/battery_log-260702/README.md)  
 **电池充电上限看起来还是不可用(悲)**
 
 ### 通过`sysfs`管理（电池模式已确认不可工作，仅演示）

@@ -3,533 +3,380 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// =============================================================================
+// EC 地址表
+// =============================================================================
+
 const (
+	acpiCallPath    = "/proc/acpi/call"
 	acpiReadMethod  = "\\_SB.INOU.ECRR"
 	acpiWriteMethod = "\\_SB.INOU.ECRW"
 
-	ECAddrBatteryMode   = 0x07A6 // 充电模式控制寄存器，bit4/bit5 决定充电截止百分比 (100/90/80)
-	ECAddrChargeLimitUp = 0x07B9 // 充电上限百分比寄存器
-
 	// EC 每秒会检查 0x07C3 / 0x0770 只有 true 时才会开启 limit_enabled
+	// 需要短暂修改状态寄存器来触发刷新，才能让 limit_enabled 变为 true
 	ECAddrChargeGate   = 0x0742 // bit2 (0x04) = 充电限制门控是否已启用
 	ECAddrChargeState1 = 0x07C3 // EC 内部状态寄存器 #1
 	ECAddrChargeState2 = 0x0770 // EC 内部状态寄存器 #2
 
-	ECAddrFullChargeCapLow  = 0x0404 // 满充容量低位寄存器 (16-bit word，单位 mAh)
-	ECAddrBatteryTemp       = 0x04A2 // 电池温度寄存器 (16-bit word，单位 0.1K，需减 2732 再除以 10 转为 °C)
-	ECAddrBatteryRSOC       = 0x04AB // 电池相对充电状态 (RSOC) 百分比寄存器 (0~100%)
-	ECAddrCycleCountLow     = 0x04A6 // 电池循环次数寄存器 (16-bit word)
-	ECAddrDesignCapacityLow = 0x0402 // 电池设计容量低位寄存器 (16-bit word，单位 mAh)
-	ECAddrDesignVoltageLow  = 0x0408 // 电池设计电压低位寄存器 (16-bit word，单位 mV)
-	ECAddrBSTBPRLow         = 0x0434 // 电池电流 (BST BPR) 低位寄存器 (16-bit word，单位 mA)
-	ECAddrBSTBRCLow         = 0x0436 // 电池剩余容量 (BST BRC) 低位寄存器 (16-bit word，单位 mAh)
-	ECAddrBSTBPVLow         = 0x0438 // 电池电压 (BST BPV) 低位寄存器 (16-bit word，单位 mV)
-	ECAddrAPOEMByte         = 0x0741 // AP OEM 字节，bit0 = AP 存在标志（需置 1 才能修改充电模式）
-	ECAddrSingleKBLEnable   = 0x078C // 键盘背光控制寄存器，bit5~bit6 为亮度等级 (0=关 1=低 2=高)，bit4 为使能位
-	ECAddrModeCtrl          = 0x0751 // 性能模式控制寄存器，bit4/bit5/bit7 组合决定 TDP 档位 (25W/45W/65W)
+	//实际上所有EC的写入都只需要修改标志位
+	ECAddrBatteryMode       = 0x07A6 // 充电模式：默认0x08,,刷写slimbook的BIOS后默认值为0x00, 0x00=high_capacity 0x10=balanced 0x20=stationary
+	ECAddrChargeLimitUp     = 0x07B9 // 充电上限百分比 (1-100)
+	ECAddrFullChargeCapLow  = 0x0404 // 满充容量低位 (16-bit word，mAh)
+	ECAddrBatteryTemp       = 0x04A2 // 电池温度 (16-bit word，0.1K，减 2732 再 /10 得 °C)
+	ECAddrBatteryRSOC       = 0x04AB // 电池相对充电状态 (0-100%)
+	ECAddrCycleCountLow     = 0x04A6 // 电池循环次数 (16-bit word)
+	ECAddrDesignCapacityLow = 0x0402 // 电池设计容量低位 (16-bit word，mAh)
+	ECAddrDesignVoltageLow  = 0x0408 // 电池设计电压低位 (16-bit word，mV)
+	ECAddrBSTBPRLow         = 0x0434 // 电池电流 (BST BPR，16-bit word，mA)
+	ECAddrBSTBRCLow         = 0x0436 // 电池剩余容量 (BST BRC，16-bit word，mAh)
+	ECAddrBSTBPVLow         = 0x0438 // 电池电压 (BST BPV，16-bit word，mV)
+	ECAddrAPOEMByte         = 0x0741 // AP 手动模式：默认0x80，0x00=关 0x01=开
+	ECAddrSingleKBLEnable   = 0x078C // 键盘灯：0x10=关 0x30=低 0x50=高
+	ECAddrModeCtrl          = 0x0751 // 性能模式：0x00=45W 0xA0=25W 0x10=65W
 )
 
-// perfRegVal 性能模式（TDP 瓦数）对应写入 ECAddrModeCtrl 的完整寄存器值。
-var perfRegVal = map[int]byte{
-	45: 0x00, // 性能
-	25: 0xA0, // 办公
-	65: 0x10, // 狂暴
+// 数值对应表
+type bitFlagField struct {
+	name    string
+	hint    string
+	addr    uint16
+	mask    byte
+	values  map[int]byte
+	nameMap map[int]string
 }
 
-// validTDPs 合法的 TDP 档位，用于校验输入
-var validTDPs = map[int]bool{25: true, 45: true, 65: true}
-
-type AcpiCall struct{}
-
-func NewAcpiCall() *AcpiCall {
-	return &AcpiCall{}
+var chargeModeField = bitFlagField{
+	name: "充电模式", hint: "0|1|2",
+	addr: ECAddrBatteryMode, mask: 0x30,
+	values:  map[int]byte{0: 0x00, 1: 0x10, 2: 0x20},
+	nameMap: map[int]string{0: "高容量", 1: "均衡", 2: "固定充电"},
 }
 
-// isAcpiError 判断 acpi_call 返回内容是否表示出错。
-func isAcpiError(result string) bool {
-	s := strings.TrimSpace(result)
-	if s == "" {
-		return true
-	}
-	if strings.HasPrefix(s, "Error:") || strings.HasPrefix(s, "ACPI call failed") {
-		return true
-	}
-	trimmed := strings.TrimRight(s, "\x00")
-	trimmed = strings.TrimSpace(trimmed)
-	if strings.HasPrefix(trimmed, "0x") || strings.HasPrefix(trimmed, "0X") {
-		_, err := strconv.ParseUint(trimmed, 0, 64)
-		return err != nil
-	}
-	_, err := strconv.ParseUint(trimmed, 10, 64)
-	return err != nil
+var kbLightField = bitFlagField{
+	name: "键盘灯亮度", hint: "0|1|2",
+	addr: ECAddrSingleKBLEnable, mask: 0x70,
+	values:  map[int]byte{0: 0x10, 1: 0x30, 2: 0x50},
+	nameMap: map[int]string{0: "关", 1: "低", 2: "高"},
 }
 
-func (a *AcpiCall) call(method string, args ...string) (string, error) {
-	parts := append([]string{method}, args...)
-	cmd := strings.Join(parts, " ")
-	if err := os.WriteFile("/proc/acpi/call", []byte(cmd+"\n"), 0644); err != nil {
-		return "", fmt.Errorf("acpi_call write: %w", err)
-	}
-	data, err := os.ReadFile("/proc/acpi/call")
-	if err != nil {
-		return "", fmt.Errorf("acpi_call read: %w", err)
-	}
-	result := strings.TrimSpace(string(data))
-	if isAcpiError(result) {
-		return "", fmt.Errorf("acpi_call error: %s", result)
-	}
-	return result, nil
+var tdpField = bitFlagField{
+	name: "性能模式TDP", hint: "25|45|65",
+	addr: ECAddrModeCtrl, mask: 0xB0,
+	values:  map[int]byte{25: 0xA0, 45: 0x00, 65: 0x10},
+	nameMap: map[int]string{25: "25W", 45: "45W", 65: "65W"},
 }
 
-func (a *AcpiCall) ReadByte(addr uint16) (byte, error) {
-	result, err := a.call(acpiReadMethod, fmt.Sprintf("0x%04X", addr))
+func (e *EC) readEnum(f bitFlagField) (int, error) {
+	val, err := e.ReadByte(f.addr)
 	if err != nil {
 		return 0, err
 	}
-	result = strings.TrimSpace(strings.TrimRight(result, "\x00"))
-	if strings.HasPrefix(result, "0x") || strings.HasPrefix(result, "0X") {
-		val, err := strconv.ParseUint(result, 0, 8)
-		if err != nil {
-			return 0, fmt.Errorf("parse ACPI hex %q: %w", result, err)
+	masked := val & f.mask
+	for k, v := range f.values {
+		if masked == v&f.mask {
+			return k, nil
 		}
-		return byte(val), nil
 	}
-	val, err := strconv.ParseUint(result, 10, 8)
-	if err != nil {
-		return 0, fmt.Errorf("parse ACPI dec %q: %w", result, err)
-	}
-	return byte(val), nil
+	return 0, fmt.Errorf("%s寄存器状态异常 (0x%02X)", f.name, val)
 }
 
-func (a *AcpiCall) ReadWord(addrLow uint16) (uint16, error) {
-	lo, err := a.ReadByte(addrLow)
+func (e *EC) writeEnum(f bitFlagField, key int) error {
+	v, ok := f.values[key]
+	if !ok {
+		return fmt.Errorf("未知%s: %d (请使用: %s)", f.name, key, f.hint)
+	}
+	return e.WriteBits(f.addr, f.mask, v)
+}
+
+type EC struct{}
+
+// 验证 /proc/acpi/call 是否可用（需安装 acpi_call）
+func OpenEC() (*EC, error) {
+	if _, err := os.Stat(acpiCallPath); err != nil {
+		return nil, fmt.Errorf("找不到 %s，请安装 acpi_call", acpiCallPath)
+	}
+	return &EC{}, nil
+}
+
+func (e *EC) Close() error { return nil }
+
+// 向 /proc/acpi/call 写入 ACPI 调用字符串
+func acpiWrite(call string) (string, error) {
+	fWrite, err := os.OpenFile(acpiCallPath, os.O_WRONLY, 0)
+	if err != nil {
+		return "", fmt.Errorf("打开(写) %s 失败: %w", acpiCallPath, err)
+	}
+	_, err = fWrite.WriteString(call)
+	fWrite.Close()
+	if err != nil {
+		return "", fmt.Errorf("ACPI 调用写入失败: %w", err)
+	}
+
+	fRead, err := os.Open(acpiCallPath)
+	if err != nil {
+		return "", fmt.Errorf("打开(读) %s 失败: %w", acpiCallPath, err)
+	}
+	defer fRead.Close()
+
+	buf, err := io.ReadAll(fRead)
+	if err != nil {
+		return "", fmt.Errorf("读取 ACPI 结果失败: %w", err)
+	}
+
+	out := strings.TrimSpace(strings.TrimRight(string(buf), "\x00"))
+
+	if strings.HasPrefix(out, "Error") {
+		return "", fmt.Errorf("ACPI 方法执行失败: %s", out)
+	}
+	return out, nil
+}
+
+// 读取单字节
+func (e *EC) ReadByte(addr uint16) (byte, error) {
+	out, err := acpiWrite(fmt.Sprintf("%s 0x%04X", acpiReadMethod, addr))
+	if err != nil {
+		return 0, fmt.Errorf("读取 EC 0x%04X 失败: %w", addr, err)
+	}
+	hexPart := strings.TrimPrefix(out, "0x")
+	if hexPart == "" {
+		return 0, fmt.Errorf("读取 EC 0x%04X: 无法解析返回值 %q", addr, out)
+	}
+	v, err := strconv.ParseUint(hexPart, 16, 8)
+	if err != nil {
+		return 0, fmt.Errorf("读取 EC 0x%04X: 解析 %q 失败: %w", addr, out, err)
+	}
+	return byte(v), nil
+}
+
+// 读取两个连续字节，组成16位字节
+func (e *EC) ReadWord(addrLow uint16) (uint16, error) {
+	lo, err := e.ReadByte(addrLow)
 	if err != nil {
 		return 0, err
 	}
-	hi, err := a.ReadByte(addrLow + 1)
+	hi, err := e.ReadByte(addrLow + 1)
 	if err != nil {
 		return 0, err
 	}
-	return (uint16(hi) << 8) | uint16(lo), nil
+	return uint16(lo) | uint16(hi)<<8, nil
 }
 
-func (a *AcpiCall) WriteByte(addr uint16, val byte) error {
-	_, err := a.call(acpiWriteMethod, fmt.Sprintf("0x%04X", addr), fmt.Sprintf("0x%02X", val))
-	return err
-}
-
-func (a *AcpiCall) readWordAt(addr uint16) (int, error) {
-	v, err := a.ReadWord(addr)
-	return int(v), err
-}
-
-func (a *AcpiCall) ReadCycleCount() (int, error)         { return a.readWordAt(ECAddrCycleCountLow) }
-func (a *AcpiCall) ReadDesignCapacity() (int, error)     { return a.readWordAt(ECAddrDesignCapacityLow) }
-func (a *AcpiCall) ReadDesignVoltage() (int, error)      { return a.readWordAt(ECAddrDesignVoltageLow) }
-func (a *AcpiCall) ReadFullChargeCapacity() (int, error) { return a.readWordAt(ECAddrFullChargeCapLow) }
-func (a *AcpiCall) ReadBatteryCurrent() (int, error)     { return a.readWordAt(ECAddrBSTBPRLow) }
-func (a *AcpiCall) ReadRemainingCapacity() (int, error)  { return a.readWordAt(ECAddrBSTBRCLow) }
-func (a *AcpiCall) ReadBatteryVoltage() (int, error)     { return a.readWordAt(ECAddrBSTBPVLow) }
-
-func (a *AcpiCall) ReadRSOC() (int, error) {
-	val, err := a.ReadByte(ECAddrBatteryRSOC)
-	return int(val), err
-}
-
-// ReadMode 读取当前充电模式 (100|90|80)。
-func (a *AcpiCall) ReadMode() (int, error) {
-	val, err := a.ReadByte(ECAddrBatteryMode)
+// 写入单字节
+func (e *EC) WriteByte(addr uint16, val byte) error {
+	_, err := acpiWrite(fmt.Sprintf("%s 0x%04X 0x%02X", acpiWriteMethod, addr, val))
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("写入 EC 0x%04X=0x%02X 失败: %w", addr, val, err)
 	}
-	bit4 := (val>>4)&1 == 1
-	bit5 := (val>>5)&1 == 1
-	switch {
-	case !bit4 && !bit5:
-		return 100, nil
-	case bit4 && !bit5:
-		return 90, nil
-	case !bit4 && bit5:
-		return 80, nil
-	default:
-		return 0, fmt.Errorf("充电模式寄存器状态异常 (0x%02X)", val)
-	}
+	return nil
 }
 
-func (a *AcpiCall) WriteMode(pct int) error {
-	apVal, err := a.ReadByte(ECAddrAPOEMByte)
+// 读取旧值然后替换标志位
+func (e *EC) WriteBits(addr uint16, mask, val byte) error {
+	old, err := e.ReadByte(addr)
 	if err != nil {
 		return err
 	}
-	if apVal&1 == 0 {
-		apVal |= 1
-		if err := a.WriteByte(ECAddrAPOEMByte, apVal); err != nil {
-			return err
-		}
+	newVal := (old &^ mask) | (val & mask)
+	if newVal == old {
+		return nil
 	}
-	val, err := a.ReadByte(ECAddrBatteryMode)
+	return e.WriteByte(addr, newVal)
+}
+
+// =============================================================================
+// 充电模式 / 充电上限 / 键盘灯 / 性能模式 / 电池信息
+// =============================================================================
+
+// 打开手动模式
+func (e *EC) ensureAPMode() error {
+	val, err := e.ReadByte(ECAddrAPOEMByte)
 	if err != nil {
 		return err
 	}
-	val &^= 0b00110000
-	switch pct {
-	case 90:
-		val |= 0b00010000
-	case 80:
-		val |= 0b00100000
+	if val&0x01 != 0 {
+		return nil
 	}
-	return a.WriteByte(ECAddrBatteryMode, val)
+	return e.WriteBits(ECAddrAPOEMByte, 0x01, 0x01)
 }
 
-func (a *AcpiCall) ReadChargeLimitUp() (int, error) {
-	val, err := a.ReadByte(ECAddrChargeLimitUp)
+// 设置充电模式
+func (e *EC) WriteChargeMode(mode int) error {
+	if err := e.ensureAPMode(); err != nil {
+		return err
+	}
+	return e.writeEnum(chargeModeField, mode)
+}
+
+// 读取充电上限
+func (e *EC) ReadChargeLimitUp() (int, error) {
+	val, err := e.ReadByte(ECAddrChargeLimitUp)
 	if err != nil {
 		return 0, err
 	}
-	if limit := val & 0x7F; limit != 0 {
-		return int(limit), nil
+	limit := val & 0x7F
+	if limit == 0 {
+		return 0, fmt.Errorf("充电上限为0, 请检查")
 	}
-	return 100, nil
+	return int(limit), nil
 }
 
-func (a *AcpiCall) WriteChargeLimitUp(pct int) error {
+// 写入充电上限，原版EC需要修改状态值等待EC刷新
+func (e *EC) WriteChargeLimitUp(pct int) error {
 	if pct < 1 || pct > 100 {
 		return fmt.Errorf("充电上限必须为 1-100, 输入为 %d", pct)
 	}
-
-	old, err := a.ReadByte(ECAddrChargeLimitUp)
-	if err != nil {
-		return fmt.Errorf("读取充电上限寄存器失败: %w", err)
-	}
-	newVal := (old & 0x80) | byte(pct)
-	if err := a.WriteByte(ECAddrChargeLimitUp, newVal); err != nil {
+	if err := e.WriteBits(ECAddrChargeLimitUp, 0x7F, byte(pct)); err != nil {
 		return fmt.Errorf("写入充电上限失败: %w", err)
 	}
 
-	state1, err1 := a.ReadByte(ECAddrChargeState1)
-	state2, err2 := a.ReadByte(ECAddrChargeState2)
-	if err1 != nil || err2 != nil {
-		fmt.Fprintf(os.Stderr, "警告: 读取状态寄存器失败 (state1 err=%v, state2 err=%v)，跳过 EC 触发步骤\n", err1, err2)
-	} else if !(state1 == 4 || state1 == 5 || state2 == 4 || state2 == 5) {
-		// EC 固件逻辑: limit_enabled = state_is(4) || state_is(5)
-		// false → 需写 4 到 0x07C3 触发 EC
-		saved := state1
-		if err := a.WriteByte(ECAddrChargeState1, 0x04); err != nil {
-			return fmt.Errorf("写入伪装状态失败: %w", err)
+	state1, err1 := e.ReadByte(ECAddrChargeState1)
+	state2, err2 := e.ReadByte(ECAddrChargeState2)
+	switch {
+	case err1 != nil || err2 != nil:
+		fmt.Fprintf(os.Stderr, "读取状态寄存器失败 (state1 err=%v, state2 err=%v)\n", err1, err2)
+	case state1 == 4 || state1 == 5 || state2 == 4 || state2 == 5: //已刷BIOS，忘了值是啥了，都校验一下
+		// 已处于生效状态，无需触发
+	default:
+		if err := e.WriteByte(ECAddrChargeState1, 0x04); err != nil {
+			return fmt.Errorf("写入修改状态失败: %w", err)
 		}
 		time.Sleep(2 * time.Second)
-		if err := a.WriteByte(ECAddrChargeState1, saved); err != nil {
+		if err := e.WriteByte(ECAddrChargeState1, state1); err != nil {
 			return fmt.Errorf("恢复状态寄存器失败: %w", err)
 		}
 		time.Sleep(2 * time.Second)
 	}
 
-	got, err := a.ReadByte(ECAddrChargeLimitUp)
+	got, err := e.ReadChargeLimitUp()
 	if err != nil {
 		return fmt.Errorf("校验读取充电上限失败: %w", err)
 	}
-	if int(got&0x7F) != pct {
-		return fmt.Errorf("写入后校验不通过: 读取 %d%%, 期望 %d%%", got&0x7F, pct)
+	if got != pct {
+		return fmt.Errorf("写入后校验不通过: 读取 %d%%, 期望 %d%%", got, pct)
 	}
 	return nil
 }
 
-func (a *AcpiCall) ReadBatteryTemperature() (int, error) {
-	raw, err := a.ReadWord(ECAddrBatteryTemp)
-	if err != nil {
+// 读取电池温度，转成摄氏度
+func (e *EC) ReadBatteryTemperature() (int, error) {
+	raw, err := e.ReadWord(ECAddrBatteryTemp)
+	if err != nil || raw == 0 {
 		return 0, err
-	}
-	if raw == 0 {
-		return 0, nil
 	}
 	return (int(raw) - 2732) / 10, nil
 }
 
-func (a *AcpiCall) ReadKBLightLevel() (int, error) {
-	val, err := a.ReadByte(ECAddrSingleKBLEnable)
-	if err != nil {
-		return 0, err
-	}
-	return int(val >> 5), nil
-}
+func printECStatus(e *EC) {
+	apMode, _ := e.ReadByte(ECAddrAPOEMByte)
+	mode, _ := e.readEnum(chargeModeField)
+	limit, _ := e.ReadChargeLimitUp()
+	gate, _ := e.ReadByte(ECAddrChargeGate)
+	temp, _ := e.ReadBatteryTemperature()
+	rsoc, _ := e.ReadByte(ECAddrBatteryRSOC)
+	cycles, _ := e.ReadWord(ECAddrCycleCountLow)
+	designCap, _ := e.ReadWord(ECAddrDesignCapacityLow)
+	fullCap, _ := e.ReadWord(ECAddrFullChargeCapLow)
+	remainCap, _ := e.ReadWord(ECAddrBSTBRCLow)
+	voltage, _ := e.ReadWord(ECAddrBSTBPVLow)
+	designVolt, _ := e.ReadWord(ECAddrDesignVoltageLow)
+	current, _ := e.ReadWord(ECAddrBSTBPRLow)
+	kbLevel, _ := e.readEnum(kbLightField)
+	tdp, _ := e.readEnum(tdpField)
 
-func (a *AcpiCall) SetKBLightLevel(level int) error {
-	if level < 0 || level > 2 {
-		return fmt.Errorf("键盘亮度等级必须为 0-2, 输入为 %d", level)
+	wear := "N/A"
+	if designCap > 0 {
+		wear = fmt.Sprintf("%.1f%%", float64(designCap-fullCap)/float64(designCap)*100)
 	}
-	val, err := a.ReadByte(ECAddrSingleKBLEnable)
-	if err != nil {
-		return err
+	ap := "关闭"
+	if apMode&1 != 0 {
+		ap = "开启"
 	}
-	val |= 0x10
-	val &^= 0x60
-	val |= byte(level) << 5
-	return a.WriteByte(ECAddrSingleKBLEnable, val)
-}
-
-// ReadPerfMode 读取当前性能模式，返回 TDP 瓦数 (25|45|65)
-const perfRegMask byte = 0x80 | 0x20 | 0x10 // = 0xB0
-
-// 修改：ReadPerfMode 改为反查 perfRegVal
-func (a *AcpiCall) ReadPerfMode() (int, error) {
-	val, err := a.ReadByte(ECAddrModeCtrl)
-	if err != nil {
-		return 0, err
+	gateStatus := "未生效"
+	if gate&0x04 != 0 {
+		gateStatus = "已生效"
 	}
-	masked := val & perfRegMask
-	for tdp, regVal := range perfRegVal {
-		if masked == regVal&perfRegMask {
-			return tdp, nil
-		}
-	}
-	return 0, fmt.Errorf("性能模式寄存器状态异常 (0x%02X)", val)
-}
 
-// WritePerfMode 写入性能模式
-func (a *AcpiCall) WritePerfMode(tdp int) error {
-	val, ok := perfRegVal[tdp]
-	if !ok {
-		return fmt.Errorf("未知TDP: %d", tdp)
-	}
-	return a.WriteByte(ECAddrModeCtrl, val)
-}
-
-type ecReading struct {
-	label string
-	read  func() (string, error)
-}
-
-func printECStatus(a *AcpiCall) {
 	fmt.Println("=== 当前配置如下 ===")
-	var designCap, fullCap int
-	var haveDesignCap, haveFullCap bool
-
-	readings := []ecReading{
-		{"手动模式        ", func() (string, error) {
-			v, err := a.ReadByte(ECAddrAPOEMByte)
-			if err != nil {
-				return "", err
-			}
-			if v&1 != 0 {
-				return "开启", nil
-			}
-			return "关闭", nil
-		}},
-		{"充电模式        ", func() (string, error) {
-			v, err := a.ReadMode()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("~%d%%", v), nil
-		}},
-		{"充电上限        ", func() (string, error) {
-			v, err := a.ReadChargeLimitUp()
-			if err != nil {
-				return "", err
-			}
-			gate, gerr := a.ReadByte(ECAddrChargeGate)
-			enabled := "未生效"
-			if gerr == nil && gate&0x04 != 0 {
-				enabled = "已生效"
-			}
-			return fmt.Sprintf("%d%% (%s)", v, enabled), nil
-		}},
-		{"电池温度        ", func() (string, error) {
-			v, err := a.ReadBatteryTemperature()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d°C", v), nil
-		}},
-		{"相对充电状态    ", func() (string, error) {
-			v, err := a.ReadRSOC()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d%%", v), nil
-		}},
-		{"循环次数        ", func() (string, error) {
-			v, err := a.ReadCycleCount()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d", v), nil
-		}},
-		{"设计容量        ", func() (string, error) {
-			v, err := a.ReadDesignCapacity()
-			if err != nil {
-				return "", err
-			}
-			designCap, haveDesignCap = v, true
-			return fmt.Sprintf("%d mAh", v), nil
-		}},
-		{"满充容量        ", func() (string, error) {
-			v, err := a.ReadFullChargeCapacity()
-			if err != nil {
-				return "", err
-			}
-			fullCap, haveFullCap = v, true
-			return fmt.Sprintf("%d mAh", v), nil
-		}},
-		{"剩余容量        ", func() (string, error) {
-			v, err := a.ReadRemainingCapacity()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d mAh", v), nil
-		}},
-		{"电池电压        ", func() (string, error) {
-			v, err := a.ReadBatteryVoltage()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d mV", v), nil
-		}},
-		{"设计电压        ", func() (string, error) {
-			v, err := a.ReadDesignVoltage()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d mV", v), nil
-		}},
-		{"电池损耗        ", func() (string, error) {
-			if !haveDesignCap || !haveFullCap || designCap <= 0 {
-				return "N/A", nil
-			}
-			wear := float64(designCap-fullCap) / float64(designCap) * 100.0
-			return fmt.Sprintf("%.1f%%", wear), nil
-		}},
-		{"电池电流        ", func() (string, error) {
-			v, err := a.ReadBatteryCurrent()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d mA", v), nil
-		}},
-		{"键盘灯          ", func() (string, error) {
-			v, err := a.ReadKBLightLevel()
-			if err != nil {
-				return "", err
-			}
-			status := "关"
-			if v > 0 {
-				status = "开"
-			}
-			return fmt.Sprintf("%s (等级 %d)", status, v), nil
-		}},
-		{"性能模式        ", func() (string, error) {
-			tdp, err := a.ReadPerfMode()
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%dW", tdp), nil
-		}},
-	}
-
-	for _, r := range readings {
-		val, err := r.read()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: 错误: %v\n", r.label, err)
-			continue
-		}
-		fmt.Printf("%s: %s\n", r.label, val)
-	}
+	fmt.Printf("手动模式        : %s\n", ap)
+	fmt.Printf("充电模式        : %s (%d)\n", chargeModeField.nameMap[mode], mode)
+	fmt.Printf("充电上限        : %d%% (%s)\n", limit, gateStatus)
+	fmt.Printf("电池温度        : %d°C\n", temp)
+	fmt.Printf("相对充电状态    : %d%%\n", rsoc)
+	fmt.Printf("循环次数        : %d\n", cycles)
+	fmt.Printf("设计容量        : %d mAh\n", designCap)
+	fmt.Printf("满充容量        : %d mAh\n", fullCap)
+	fmt.Printf("剩余容量        : %d mAh\n", remainCap)
+	fmt.Printf("电池电压        : %d mV\n", voltage)
+	fmt.Printf("设计电压        : %d mV\n", designVolt)
+	fmt.Printf("电池损耗        : %s\n", wear)
+	fmt.Printf("电池电流        : %d mA\n", int16(current)) //电流以16位整型解析，防止溢出，虽然这个电脑的EC并不会读出负数
+	fmt.Printf("键盘灯          : %s (%d)\n", kbLightField.nameMap[kbLevel], kbLevel)
+	fmt.Printf("性能模式        : %s\n", tdpField.nameMap[tdp])
 }
 
 func main() {
-	flagMode := flag.Int("mode", -1, "设置充电模式: 100|90|80")
+	flagMode := flag.Int("mode", -1, "设置充电模式: 0=高容量 1=均衡 2=固定充电")
 	flagLimitUp := flag.Int("limit-up", -1, "设置充电上限百分比(1-100)")
 	flagStatus := flag.Bool("status", false, "读取当前电池充电状态")
 	flagKBDLevel := flag.Int("kbd-level", -1, "设置键盘灯亮度 (0=关 1=低 2=高)")
 	flagPerf := flag.Int("perf", -1, "设置性能模式TDP: 25|45|65")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "无界14x 控制中心 By LongSang01\n")
-		fmt.Fprintf(os.Stderr, "依赖项: acpi_call\n\n")
-		fmt.Fprintf(os.Stderr, "经过实际测试，充电模式无法正常工作，仅供演示；充电上限已经可以正常工作\n")
-		fmt.Fprintf(os.Stderr, "选项:\n")
-		fmt.Fprintf(os.Stderr, "  -mode int\n        设置充电模式: 100|90|80 (不可用)\n")
-		fmt.Fprintf(os.Stderr, "  -limit-up int\n        设置充电上限百分比 (1-100)\n")
-		fmt.Fprintf(os.Stderr, "  -status\n        读取当前电池充电状态\n")
-		fmt.Fprintf(os.Stderr, "  -kbd-level int\n        设置键盘灯亮度 (0=关 1=低 2=高)\n")
-		fmt.Fprintf(os.Stderr, "  -perf int\n        设置性能模式TDP: 25|45|65\n")
-		fmt.Fprintf(os.Stderr, "\n示例:\n")
-		fmt.Fprintf(os.Stderr, "  sudo %s -status\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -mode 80\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -limit-up 80\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -kbd-level 2\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -perf 45\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  sudo %s -limit-up 80 -kbd-level 0\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, `无界14x 控制中心 By LongSang01
+依赖项: acpi_call
+
+用法: %s [选项]
+  -mode int        充电模式 0(高容量) 1(均衡) 2(固定充电)
+  -limit-up int    充电上限 1-100
+  -status          查看配置状态
+  -kbd-level int   键盘灯亮度 0(关闭) 1(低) 2(高)
+  -perf int        性能模式 25|45|65
+
+示例:
+  sudo %s -status
+  sudo %s -limit-up 80 -kbd-level 0
+`, os.Args[0], os.Args[0], os.Args[0])
 	}
 	flag.Parse()
 
-	if _, err := os.Stat("/proc/acpi/call"); err != nil {
-		fmt.Fprintln(os.Stderr, "错误: /proc/acpi/call 不存在，请确保 acpi_call 内核模块已加载。")
+	ec, err := OpenEC()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "错误:", err)
 		os.Exit(1)
 	}
+	defer ec.Close()
 
-	acpi := NewAcpiCall()
-
-	hasAction := *flagMode >= 0 || *flagLimitUp >= 0 ||
-		*flagStatus || *flagKBDLevel >= 0 || *flagPerf >= 0
-	if !hasAction {
+	if !(*flagMode >= 0 || *flagLimitUp >= 0 || *flagStatus || *flagKBDLevel >= 0 || *flagPerf >= 0) {
 		*flagStatus = true
 	}
 
-	if *flagMode >= 0 && *flagLimitUp >= 0 {
-		fmt.Fprintln(os.Stderr, "错误: -mode 和 -limit-up 不能同时使用")
-		os.Exit(1)
+	mustWrite := func(name string, flag *int, fn func(int) error, f bitFlagField) {
+		if *flag < 0 {
+			return
+		}
+		if err := fn(*flag); err != nil {
+			fmt.Fprintf(os.Stderr, "设置%s错误: %v\n", name, err)
+			os.Exit(1)
+		}
+		if n, ok := f.nameMap[*flag]; ok {
+			fmt.Printf("%s已设置为 %s (%d)\n", name, n, *flag)
+		} else {
+			fmt.Printf("%s已设置为 %d\n", name, *flag)
+		}
 	}
-
-	if *flagMode >= 0 {
-		switch *flagMode {
-		case 100, 90, 80:
-		default:
-			fmt.Fprintf(os.Stderr, "未知模式: %d (请使用: 80|90|100)\n", *flagMode)
-			os.Exit(1)
-		}
-		if err := acpi.WriteMode(*flagMode); err != nil {
-			fmt.Fprintf(os.Stderr, "设置模式错误: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("充电模式已设置为 ~%d%%\n", *flagMode)
-	}
-
-	if *flagLimitUp >= 0 {
-		if err := acpi.WriteChargeLimitUp(*flagLimitUp); err != nil {
-			fmt.Fprintf(os.Stderr, "设置充电上限错误: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("充电上限已设置为 %d%%\n", *flagLimitUp)
-	}
-
-	if *flagKBDLevel >= 0 {
-		if err := acpi.SetKBLightLevel(*flagKBDLevel); err != nil {
-			fmt.Fprintf(os.Stderr, "设置键盘灯亮度错误: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("键盘灯亮度已设置为 %d\n", *flagKBDLevel)
-	}
-
-	if *flagPerf >= 0 {
-		if !validTDPs[*flagPerf] {
-			fmt.Fprintf(os.Stderr, "未知TDP: %d (请使用: 25|45|65)\n", *flagPerf)
-			os.Exit(1)
-		}
-		if err := acpi.WritePerfMode(*flagPerf); err != nil {
-			fmt.Fprintf(os.Stderr, "设置性能模式错误: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("性能模式已设置为 %dW\n", *flagPerf)
-	}
+	mustWrite("充电模式", flagMode, ec.WriteChargeMode, chargeModeField)
+	mustWrite("充电上限", flagLimitUp, ec.WriteChargeLimitUp, bitFlagField{})
+	mustWrite("键盘灯亮度", flagKBDLevel, func(v int) error { return ec.writeEnum(kbLightField, v) }, kbLightField)
+	mustWrite("性能模式", flagPerf, func(v int) error { return ec.writeEnum(tdpField, v) }, tdpField)
 
 	if *flagStatus {
-		printECStatus(acpi)
+		printECStatus(ec)
 	}
 }
