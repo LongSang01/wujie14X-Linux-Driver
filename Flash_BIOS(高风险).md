@@ -11,7 +11,7 @@
 无界14x是台公模机器，据[minortex](https://gist.github.com/w568w/b2fc5f9d1f4dff13efe751abec27b396?permalink_comment_id=6254617#gistcomment-6254617)测试，可使用`slimbook`的`BIOS`来让充电上限直接正常工作  
 具体详情请查看新的[讨论](https://gist.github.com/w568w/957976b59906e0ce5d6c13ad342e1593)
 
-据我的实际测试，刷写版本为`N.1.14GOS07`，除了`UEFI Logo`改变，目前没有遇到大的`BUG`，**但是依旧不推荐尝试**
+据我的实际测试，刷写版本为`BIOS_N.1.14GOS07_EC_2.12`，除了`UEFI Logo`改变，目前没有遇到大的`BUG`，**但是依旧不推荐尝试**
 
 操作过程如下：
 
